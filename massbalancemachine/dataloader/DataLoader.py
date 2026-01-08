@@ -64,15 +64,16 @@ class DataLoader:
         self.test_indices = None
         self.meta_data_columns = meta_data_columns or cfg.metaData
 
+    
     def set_train_test_split(
-        self, *, test_size: float = None, type_fold: str = "group-meas-id"
+        self, *, test_size: float = None, type_fold: str = "group-meas-id", randomness : bool = False
     ) -> Tuple[Iterator[Any], Iterator[Any]]:
         """
         Split the dataset into training and testing sets.
 
         Args:
             test_size (float): Proportion of the dataset to include in the test split.
-            type_fold (str): Type of splitting between train and test sets. Options are 'group-rgi', or 'group-meas-id'.
+            type_fold (str): Type of splitting between train and test sets. Options are 'group-rgi','group-c_region' or 'group-meas-id'.
 
         Returns:
             Tuple[Iterator[Any], Iterator[Any]]: Iterators for training and testing indices.
@@ -89,13 +90,20 @@ class DataLoader:
         # I.e, one year of a stake is not split amongst test and train set
 
         # From the data get the features, targets, and glacier IDS
-        X, y, glacier_ids, stake_meas_id = self._prepare_data_for_cv(
+        X, y, glacier_ids, stake_meas_id, regions = self._prepare_data_for_cv(
             self.data, self.meta_data_columns
         )
-        gss = GroupShuffleSplit(
-            n_splits=1, test_size=test_size, random_state=self.random_seed
-        )
-        groups = {"group-meas-id": stake_meas_id, "group-rgi": glacier_ids}.get(
+        if randomness == False:
+            gss = GroupShuffleSplit(
+                n_splits=1, test_size=test_size,
+                random_state=self.random_seed #commenting this improve randomness
+            )
+        elif randomness == True:
+            gss = GroupShuffleSplit(
+                n_splits=1, test_size=test_size,
+                # random_state=self.random_seed #commenting this improve randomness
+            )
+        groups = {"group-meas-id": stake_meas_id, "group-rgi": glacier_ids, "group-c_region": regions}.get(
             type_fold
         )
         train_indices, test_indices = next(gss.split(X, y, groups))
@@ -108,8 +116,20 @@ class DataLoader:
         # Make it iterators and set as an attribute of the class
         self.train_indices = train_indices
         self.test_indices = test_indices
-
         return iter(self.train_indices), iter(self.test_indices)
+    
+    def assign_train_test_indices(self,train_indices, test_indices, test_size):
+        """ 
+        Dividing train and test ensemble based on subregion require to make the sampling N times and then choose the
+        train-test division closest to the 70-30 repartition. At each iteration the Dataloader object is redifined as well as
+        self.train_indices and self.test_indices meaning that the information in the Dataloader object are those of the last iterations 
+        and not those of the  train-test division chosen after comparing to the 70-30 repartition.
+        This function aims to correct this
+        """
+        self.train_indices = train_indices
+        self.test_indices = test_indices
+        self.test_size = test_size
+
 
     def set_custom_train_test_indices(
         self, train_indices: np.array, test_indices: np.array
@@ -157,7 +177,7 @@ class DataLoader:
         train_data = self._get_train_data()
 
         # From the training data get the features, targets, and glacier IDS
-        X, y, glacier_ids, stake_meas_id = self._prepare_data_for_cv(
+        X, y, glacier_ids, stake_meas_id, regions = self._prepare_data_for_cv(
             train_data, self.meta_data_columns
         )
 
@@ -239,7 +259,9 @@ class DataLoader:
         y = train_data["POINT_BALANCE"]
         glacier_ids = train_data["RGIId"].values
         stake_meas_id = train_data["ID"].values  # unique value per stake measurement
-        return X, y, glacier_ids, stake_meas_id
+        regions = train_data["C_REGION"].values
+        return X, y, glacier_ids, stake_meas_id, regions
+   
 
     def _create_group_kfold_splits(
         self,
