@@ -380,7 +380,7 @@ class AggregatedDataset(torch.utils.data.Dataset):
         self.metadata = metadata
         self.metadataColumns = metadataColumns or self.cfg.metaData
         self.targets = targets
-
+        # print(features)
         assert len(self.features) > 0, "The features variable is empty."
 
         _, self.month_pos = _rebuild_month_index(months_head_pad, months_tail_pad)
@@ -391,44 +391,48 @@ class AggregatedDataset(torch.utils.data.Dataset):
                 for i in range(len(self.metadata))
             ]
         )
-        self.uniqueID = np.unique(self.ID)
-        self.maxConcatNb = max(
-            [len(np.argwhere(self.ID == id)[:, 0]) for id in self.uniqueID]
-        )
+        # self.uniqueID = np.unique(self.ID)
+        # self.maxConcatNb = max(
+        #     [len(np.argwhere(self.ID == id)[:, 0]) for id in self.uniqueID]
+        # ) #take a lot of time with a lot of data, replaced with the 2 following lines
+        self.uniqueID, counts = np.unique(self.ID, return_counts=True)
+        self.maxConcatNb = counts.max()
         self.nbFeatures = self.features.shape[1]
         self.nbMetadata = self.metadata.shape[1]
         self.norm = Normalizer({k: cfg.bnds[k] for k in cfg.featureColumns})
-
+    def return_id(self):
+        return self.ID
     def mapSplitsToDataset(
         self, splits: list[tuple[np.ndarray, np.ndarray]]
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         """
         Maps split indices (usually the result of DataLoader.get_cv_split) to the
         indices used by the AggregatedDataset class.
-
+    
         Args:
             splits (list of tuple): List containing the splits indices for the cross
                 validation groups
-
+    
         Returns:
             list[tuple[np.ndarray, np.ndarray]]: List with the same number of tuples
                 as the input. Each tuple contains numpy arrays which provide the
                 corresponding indices the cross validation should use according to
                 the input splits variable.
         """
+        # Precompute the mapping of unique IDs to indices
+        uniqueID_to_indices = {uid: np.where(self.uniqueID == uid)[0] for uid in np.unique(self.uniqueID)}
+        # iii = 0
         ret = []
         for split in splits:
             t = []
             for e in split:
-                uniqueSelectedId = np.unique(self.ID[e])
-                ind = np.argwhere(self.uniqueID[None, :] == uniqueSelectedId[:, None])[
-                    :, 1
-                ]
+                uniqueSelectedId = np.unique(self.ID[e])  # Get the unique selected IDs
+                # Use the precomputed mapping for fast lookups
+                ind = np.concatenate([uniqueID_to_indices[uid] for uid in uniqueSelectedId])
                 assert all(uniqueSelectedId == self.uniqueID[ind])
                 t.append(ind)
             ret.append(tuple(t))
         return ret
-
     def __len__(self) -> int:
         return len(self.uniqueID)
 
